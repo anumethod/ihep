@@ -1,0 +1,3 @@
+[submodule "ihep"]
+	path = ihep
+	url = git@github.com:OmniUnumCo/ihep.git
