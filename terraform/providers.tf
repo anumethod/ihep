@@ -1,20 +1,14 @@
-variable "project_id" {
-  type    = string
-  default = "ihep-app"
-}
-
-variable "region" {
-  type    = string
-  default = "us-central1"
-}
-
-variable "bucket_location" {
-  type    = string
-  default = "US"
-}
-
+# Required if using User ADCs (Application Default Credentials) for Org Policy API.
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  user_project_override = true
+  billing_project       = var.billing_project
+  default_labels = {
+    goog-cloudsetup = "downloaded"
+  }
 }
 
+# Required if using User ADCs (Application Default Credentials) for Cloud Identity API.
+provider "google-beta" {
+  user_project_override = true
+  billing_project       = var.billing_project
+}
