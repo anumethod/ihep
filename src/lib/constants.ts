@@ -22,6 +22,7 @@ export const USER_ROLES = {
 export const ADMIN_NAV_ITEMS = [
   { name: "Audit Logs", href: "/admin/audit-logs", icon: "activity" },
   { name: "State Compliance", href: "/admin/state-compliance", icon: "shield" },
+  { name: "Reset Demo Data", href: "/admin/reset-data", icon: "refresh" },
 ];
 
 // Resource categories
