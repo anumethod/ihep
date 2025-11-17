@@ -1,13 +1,11 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { Providers } from './providers'
+import { AuthProvider } from '@/components/auth/AuthProvider'
 
 export const metadata: Metadata = {
-  title: 'Health Insight Ventures - Digital Health Platform',
-  description: 'Comprehensive healthcare platform for HIV patient management and support with AI-powered wellness tips and community features.',
+  title: 'IHEP - Integrated Health Empowerment Program',
+  description: 'Comprehensive healthcare platform for patient management and support with AI-powered wellness insights and community features.',
 }
-
-import MainLayout from '@/app/components/MainLayout';
 
 export default function RootLayout({
   children,
@@ -17,9 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Providers>
-          <MainLayout>{children}</MainLayout>
-        </Providers>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   )
