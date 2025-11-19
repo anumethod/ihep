@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Runner label to use (e.g. self-hosted, ubuntu-22.04, macos-latest).'
+        description: 'Runner label to use (e.g. self-hosted, macos-latest).'
         required: false
 
 concurrency:
