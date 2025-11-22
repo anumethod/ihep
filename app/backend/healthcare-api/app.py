@@ -333,9 +333,10 @@ def create_patient():
         patient_data = request.json
         result = healthcare_service.create_patient(patient_data, user_id)
         return jsonify(result), 201
-        
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error("Error creating patient record", exc_info=True)
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 @app.route('/api/v1/patients/<patient_id>', methods=['GET'])
@@ -349,9 +350,10 @@ def get_patient(patient_id: str):
         
         result = healthcare_service.get_patient(patient_id, user_id)
         return jsonify(result), 200
-        
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error("Error retrieving patient record", exc_info=True)
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 @app.route('/api/v1/research/datasets', methods=['POST'])
@@ -369,9 +371,10 @@ def create_research_dataset():
         
         result = healthcare_service.de_identify_for_research(patient_ids, k)
         return jsonify(result), 200
-        
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error("Error creating research dataset", exc_info=True)
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 if __name__ == '__main__':
