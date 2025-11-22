@@ -191,10 +191,10 @@ def health_check():
             'service': 'auth-api'
         }), 200
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.error("Health check failed", exc_info=True)
         return jsonify({
             'status': 'unhealthy',
-            'error': str(e)
+            'error': 'Service unavailable'
         }), 503
 
 @app.route('/signup', methods=['POST'])
