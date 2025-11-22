@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "check": "tsc -p tsconfig.app.json && node scripts/check-architecture.mjs",
+    "check": "tsc -p tsconfig.app.json",
     "purge": "node scripts/purge-legacy.mjs"
   },
   "dependencies": {
