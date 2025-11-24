@@ -30,10 +30,25 @@ terraform.tfstate.backup
 /backup_debug/
 /terraform.zip
 
-# Local Config
+# Local Config & Secrets
 .env.local
+.env.*.local
 /.env
+/.env.*
+.env.production
+.env.development
+.env.test
 /.config/
 /.local/
 .replit
 cookies.txt
+secrets.sh
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+*-credentials.json
+.secrets.baseline
