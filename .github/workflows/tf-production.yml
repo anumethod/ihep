@@ -1,17 +1,19 @@
-name: terraform-prod
+name: terraform-production
 
 on:
   push:
-    branches: [ "prod" ]
+    branches: [ "production" ]
 
 jobs:
   plan:
-    runs-on: self-hosted
+    runs-on: [self-hosted]
     permissions:
       id-token: write
       contents: read
     env:
       TF_IN_AUTOMATION: "true"
+      WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,8 +21,8 @@ jobs:
       - name: Auth to Google Cloud (OIDC)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SA_EMAIL }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SA_EMAIL }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -34,24 +36,26 @@ jobs:
         working-directory: terraform
         run: terraform init -input=false
 
-      - name: Terraform workspace (prod)
+      - name: Terraform workspace (production)
         working-directory: terraform
         run: |
-          terraform workspace select prod || terraform workspace new prod
+          terraform workspace select production || terraform workspace new production
 
-      - name: Terraform plan (prod)
+      - name: Terraform plan (production)
         working-directory: terraform
         run: terraform plan -input=false -no-color
 
   apply:
     needs: plan
-    runs-on: self-hosted
-    environment: prod
+    runs-on: [self-hosted]
+    environment: production
     permissions:
       id-token: write
       contents: read
     env:
       TF_IN_AUTOMATION: "true"
+      WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+      GCP_SA_EMAIL: ${{ secrets.GCP_SA_EMAIL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,8 +63,8 @@ jobs:
       - name: Auth to Google Cloud (OIDC)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SA_EMAIL }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SA_EMAIL }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -74,12 +78,12 @@ jobs:
         working-directory: terraform
         run: terraform init -input=false
 
-      - name: Terraform workspace (prod)
+      - name: Terraform workspace (production)
         working-directory: terraform
         run: |
-          terraform workspace select prod || terraform workspace new prod
+          terraform workspace select production || terraform workspace new production
 
-      - name: Terraform apply (prod)
+      - name: Terraform apply (production)
         working-directory: terraform
         run: |
           terraform apply -auto-approve \
