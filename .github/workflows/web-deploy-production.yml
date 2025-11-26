@@ -1,13 +1,13 @@
-name: web-deploy-prod
+name: web-deploy-production
 
 on:
   push:
-    branches: [ "prod" ]
+    branches: [ "production" ]
 
 jobs:
   build-and-deploy:
     runs-on: [self-hosted]
-    environment: prod
+    environment: production
     permissions:
       id-token: write
       contents: read
@@ -47,10 +47,10 @@ jobs:
         if: steps.build.outputs.built == 'true'
         run: docker push "$IMAGE"
 
-      - name: Deploy to Cloud Run (web-prod)
+      - name: Deploy to Cloud Run (web-production)
         if: steps.build.outputs.built == 'true'
         run: |
-          gcloud run deploy web-prod \
+          gcloud run deploy web-production \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --image "$IMAGE" \
