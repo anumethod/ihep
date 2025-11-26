@@ -130,7 +130,9 @@ def rate_limit(max_requests=5, window_seconds=3600):
                 return f(*args, **kwargs)
             else:
                 # Rate limit exceeded
-                logger.warning(f"Rate limit exceeded for {identifier} on {f.__name__}")
+                # Hash the identifier for logging
+                identifier_hash = hashlib.sha256(str(identifier).encode()).hexdigest()[:8]
+                logger.warning(f"Rate limit exceeded for identifier hash {identifier_hash} on {f.__name__}")
                 return jsonify({
                     'error': 'Rate limit exceeded',
                     'retry_after': redis_client.ttl(key)
@@ -272,8 +274,10 @@ def signup():
         )
         
         # Log successful signup
-        logger.info(f"User signed up: {email}")
-        
+        # Hash email for logging
+        email_hash = hashlib.sha256(email.encode()).hexdigest()[:8]
+        logger.info(f"User signed up: email hash {email_hash}")
+
         cur.close()
         conn.close()
         
@@ -343,7 +347,9 @@ def login():
                 )
                 conn.commit()
         except VerifyMismatchError:
-            logger.warning(f"Failed login attempt for {email}")
+            # Hash email for logging
+            email_hash = hashlib.sha256(email.encode()).hexdigest()[:8]
+            logger.warning(f"Failed login attempt for email hash {email_hash}")
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Generate JWT token
@@ -362,8 +368,10 @@ def login():
         )
         
         # Log successful login
-        logger.info(f"User logged in: {email}")
-        
+        # Hash email for logging
+        email_hash = hashlib.sha256(email.encode()).hexdigest()[:8]
+        logger.info(f"User logged in: email hash {email_hash}")
+
         cur.close()
         conn.close()
         
@@ -475,9 +483,11 @@ def logout():
         data = request.get_json() or {}
         if 'refreshToken' in data:
             redis_client.delete(f"refresh:{data['refreshToken']}")
-        
-        logger.info(f"User logged out: {request.user_email}")
-        
+
+        # Hash email for logging
+        email_hash = hashlib.sha256(request.user_email.encode()).hexdigest()[:8]
+        logger.info(f"User logged out: email hash {email_hash}")
+
         return jsonify({'message': 'Logged out successfully'}), 200
         
     except Exception as e:

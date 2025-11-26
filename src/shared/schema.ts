@@ -1,7 +1,9 @@
-// @ts-nocheck
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, pgEnum, AnyPgTable } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+const insertSchema = <T extends AnyPgTable>(table: T) =>
+  createInsertSchema(table) as unknown as z.ZodObject<any>;
 
 // Enum for audit event types
 export const auditEventTypeEnum = pgEnum('audit_event_type', [

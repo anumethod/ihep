@@ -1,0 +1,19 @@
+-- New tables in Cloud SQL PostgreSQL
+CREATE TABLE participant_income_streams (
+    id UUID PRIMARY KEY,
+    participant_id UUID REFERENCES participants(id),
+    source_type VARCHAR(50), -- 'peer_navigator', 'research_participation', 'gig_task', 'training_stipend'
+    amount DECIMAL(10,2),
+    frequency VARCHAR(20),
+    start_date DATE,
+    status VARCHAR(20)
+);
+
+CREATE TABLE financial_health_metrics (
+    participant_id UUID PRIMARY KEY,
+    stability_score DECIMAL(5,2),
+    income_volatility DECIMAL(5,2),
+    unclaimed_benefits_value DECIMAL(10,2),
+    last_assessment TIMESTAMP,
+    improvement_trajectory JSONB
+);

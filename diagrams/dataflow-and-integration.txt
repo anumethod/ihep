@@ -1,0 +1,253 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      IHEP DATA FLOW & INTERACTION DIAGRAM                    ║
+║                    Patient Journey Through The System                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 1: Patient Login & Dashboard Access                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    [Patient Mobile App]
+            │
+            │ 1. POST /v1/auth/login
+            │    {email, password, mfa_code}
+            ▼
+    ┌───────────────┐
+    │ Cloud Armor   │──── DDoS Check: λ/(λ+μ) × e^(-κt)
+    │  WAF Rules    │──── SQL Injection Scan: P(breach) < 10^-9
+    └───────┬───────┘
+            │
+            │ 2. Route to IAM Service
+            ▼
+    ┌───────────────────────┐
+    │  IAM Service          │
+    │  (Cloud Run - Go)     │
+    │                       │
+    │  ┌─────────────────┐ │
+    │  │ Calculate Trust │ │
+    │  │ Score T(u,r,t)  │ │
+    │  │                 │ │
+    │  │ φ₁ MFA:    0.95 │ │
+    │  │ φ₂ Device: 0.90 │ │
+    │  │ φ₃ Location:0.85│ │
+    │  │ φ₄ Behavior:0.80│ │
+    │  │ φ₅ Time:   0.75 │ │
+    │  │                 │ │
+    │  │ T = 0.87 ≥ 0.75 │ │ ✓ AUTHORIZED
+    │  └─────────────────┘ │
+    └───────┬───────────────┘
+            │
+            │ 3. Generate JWT (15min TTL)
+            │    Embed trust_score: 0.87
+            ▼
+    [Return Token to App]
+            │
+            │ 4. GET /v1/patient/dashboard
+            │    Authorization: Bearer <JWT>
+            ▼
+    ┌───────────────┐
+    │  API Gateway  │──── Validate JWT
+    └───────┬───────┘     Rate Limit Check: 1000/min
+            │
+            │ 5. Request Routing
+            ├────────────────┬─────────────────┬────────────────┐
+            │                │                 │                │
+            ▼                ▼                 ▼                ▼
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │   Patient   │  │Appointment  │  │  Resource   │  │   AI/ML     │
+    │    Twin     │  │  Service    │  │  Catalog    │  │  Inference  │
+    │   Service   │  │             │  │             │  │             │
+    └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+           │                │                │                │
+           │ 6a. Fetch     │ 6b. Fetch      │ 6c. Fetch     │ 6d. Get
+           │    Digital    │     Next       │     Local     │     Risk
+           │    Twin       │     Appts      │     Resources │     Score
+           │                │                │                │
+           ▼                ▼                ▼                ▼
+    ┌──────────────────────────────────────────────────────────────┐
+    │                    DATA LAYER                                │
+    │                                                              │
+    │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+    │  │ Healthcare  │  │  Cloud SQL  │  │ Memorystore │        │
+    │  │  API (PHI)  │  │ PostgreSQL  │  │   (Redis)   │        │
+    │  └─────────────┘  └─────────────┘  └─────────────┘        │
+    │       │                 │                 │                 │
+    │       │ FHIR R4         │ User Metadata   │ Cached Data     │
+    └───────┼─────────────────┼─────────────────┼─────────────────┘
+            │                 │                 │
+            │                 │                 │
+            └─────────┬───────┴─────────┬───────┘
+                      │                 │
+                      ▼                 ▼
+            7. Aggregate Dashboard Data
+                      │
+                      │ 8. JSON Response
+                      │    {
+                      │      twin: {...},
+                      │      appointments: [...],
+                      │      resources: [...],
+                      │      risk_score: 0.15
+                      │    }
+                      ▼
+            [Patient Mobile App Display]
+            
+            ┌─────────────────────────────┐
+            │  Dashboard Rendered:        │
+            │  • CD4 Count: 620          │
+            │  • Viral Load: Undetectable│
+            │  • Next Appt: Feb 15       │
+            │  • Risk: Low (15%)         │
+            │  • Resources: 12 nearby    │
+            └─────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 2: Digital Twin Update & AI Inference                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    [Wearable Device] ──── New Lab Results
+            │
+            │ 1. POST /v1/twin/update
+            │    {patient_id, viral_load: 48}
+            ▼
+    ┌───────────────────────┐
+    │  Patient Twin Service │
+    │                       │
+    │  ┌─────────────────┐ │
+    │  │ Validate Data   │ │
+    │  │ Check Integrity │ │
+    │  └────────┬────────┘ │
+    │           │           │
+    │  ┌────────▼────────┐ │
+    │  │ Update Twin     │ │
+    │  │ State           │ │
+    │  └────────┬────────┘ │
+    │           │           │
+    │  ┌────────▼────────┐ │
+    │  │ Trigger         │ │
+    │  │ Morphogenetic   │ │
+    │  │ Self-Healing    │ │
+    │  └────────┬────────┘ │
+    └───────────┼───────────┘
+                │
+                │ 2. Store PHI
+                ▼
+    ┌──────────────────────┐
+    │  Healthcare API      │
+    │  (FHIR Store)        │
+    │                      │
+    │  ┌────────────────┐ │
+    │  │ Envelope       │ │
+    │  │ Encryption:    │ │
+    │  │                │ │
+    │  │ KEK → DEK      │ │
+    │  │ DEK → Data     │ │
+    │  │                │ │
+    │  │ P(breach)≤10⁻²⁰│ │
+    │  └────────────────┘ │
+    └──────────┬───────────┘
+               │
+               │ 3. Calculate Hash
+               ▼
+    ┌──────────────────────┐
+    │  Merkle Tree         │
+    │  Integrity           │
+    │                      │
+    │  Previous Root:      │
+    │  a3f2b9...           │
+    │                      │
+    │  + New Record Hash:  │
+    │  9c4e1d...           │
+    │                      │
+    │  = New Root:         │
+    │  5d8a3f...           │
+    │                      │
+    │  Store in Audit Log  │
+    └──────────┬───────────┘
+               │
+               │ 4. Trigger AI Inference
+               ▼
+    ┌──────────────────────────┐
+    │  AI/ML Inference Service │
+    │  (Vertex AI)             │
+    │                          │
+    │  ┌────────────────────┐ │
+    │  │ Input: VL=48       │ │
+    │  │ Historical: [...]  │ │
+    │  │                    │ │
+    │  │ Model: Adherence   │ │
+    │  │ Risk Predictor     │ │
+    │  │                    │ │
+    │  │ Output:            │ │
+    │  │ • Risk: 0.42 (42%) │ │
+    │  │ • Recommendation:  │ │
+    │  │   Increase         │ │
+    │  │   adherence        │ │
+    │  │   monitoring       │ │
+    │  └────────────────────┘ │
+    └──────────┬───────────────┘
+               │
+               │ 5. Send Alert
+               ▼
+    ┌──────────────────────┐
+    │  Notification        │
+    │  Service             │
+    │                      │
+    │  • SMS to Patient    │
+    │  • Email to Provider │
+    │  • Push to Navigator │
+    └──────────┬───────────┘
+               │
+               ▼
+    [Stakeholders Notified]
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  SCENARIO 3: Federated AI Training Across Nodes                             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    [Miami Node]        [LA/SD Node]       [NY/MA Node]
+         │                   │                   │
+         │ 1. Local Training │                   │
+         │    on 1500 twins  │                   │
+         │                   │                   │
+    ┌────▼─────┐        ┌────▼─────┐       ┌────▼─────┐
+    │  Local   │        │  Local   │       │  Local   │
+    │  Model   │        │  Model   │       │  Model   │
+    │  Δw₁     │        │  Δw₂     │       │  Δw₃     │
+    └────┬─────┘        └────┬─────┘       └────┬─────┘
+         │                   │                   │
+         │ 2. Send Gradients (NOT raw data)     │
+         │                   │                   │
+         └────────┬──────────┴──────────┬────────┘
+                  │                     │
+                  ▼                     ▼
+          ┌───────────────────────────────┐
+          │  Federated Aggregation Server │
+          │  (Vertex AI)                  │
+          │                               │
+          │  w_global = Σ(n_i/N)×Δw_i    │
+          │                               │
+          │  where:                       │
+          │  • n_i = local sample count   │
+          │  • N = total samples          │
+          │  • Δw_i = local gradient      │
+          └───────────┬───────────────────┘
+                      │
+                      │ 3. Distribute Updated Model
+                      │
+         ┌────────────┼────────────┐
+         │            │            │
+         ▼            ▼            ▼
+    [Miami]        [LA/SD]       [NY/MA]
+      Node          Node          Node
+         │            │            │
+         │ 4. Update Local Models  │
+         │            │            │
+         └────────────┴────────────┘
+         
+    5. Next Training Round Begins
+    
+    Performance:
+    • Training Time: 19.5s (vs 8.3hrs baseline)
+    • Speedup: 1,538x
+    • Privacy: PHI never leaves local nodes
+    • Security: Differential privacy on gradients

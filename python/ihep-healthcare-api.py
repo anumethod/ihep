@@ -76,7 +76,7 @@ def require_auth(f):
 def check_consent(user_id, consent_type='data_access'):
     """
     Verify that user has provided necessary consent for data operations.
-    
+
     This implements the ethical framework requirement that all PHI access
     must be explicitly consented to by the patient. Consent types include:
     - data_access: Basic health data viewing
@@ -86,35 +86,37 @@ def check_consent(user_id, consent_type='data_access'):
     try:
         # Query consent from FHIR Consent resource
         consent_path = f"{FHIR_STORE_PATH}/fhir/Consent"
-        
+
         # Search for active consents for this user
         search_params = {
             'patient': f"Patient/{user_id}",
             'status': 'active',
             'category': consent_type
         }
-        
+
         response = healthcare_client.search_resources_fhir(
             parent=FHIR_STORE_PATH,
             resource_type='Consent',
             query_string='&'.join([f"{k}={v}" for k, v in search_params.items()])
         )
-        
+
         # If any active consent found, return True
         if response.entry:
             return True
-        
-        logger.warning(f"No active consent found for user {user_id}, type {consent_type}")
+
+        # Hash user_id for logging
+        user_hash = hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
+        logger.warning(f"No active consent found for user hash {user_hash}, type {consent_type}")
         return False
-        
+
     except exceptions.GoogleAPIError as e:
-        logger.error(f"Error checking consent: {str(e)}")
+        logger.error(f"Error checking consent: API error occurred")
         return False
 
 def audit_phi_access(user_id, resource_type, resource_id, action, success=True):
     """
     Log PHI access for HIPAA audit trail.
-    
+
     HIPAA requires comprehensive audit logs of all PHI access including:
     - Who accessed the data (user_id)
     - What was accessed (resource_type, resource_id)
@@ -134,25 +136,30 @@ def audit_phi_access(user_id, resource_type, resource_id, action, success=True):
             'ip_address': request.headers.get('X-Forwarded-For', request.remote_addr),
             'user_agent': request.headers.get('User-Agent', '')
         }
-        
-        # Log to Cloud Logging with PHI access severity
-        logger.info(f"PHI Access: {json.dumps(audit_entry)}", extra={
+
+        # Create sanitized version for general logging (hash sensitive IDs)
+        user_hash = hashlib.sha256(str(user_id).encode()).hexdigest()[:8]
+        resource_hash = hashlib.sha256(str(resource_id).encode()).hexdigest()[:8]
+
+        # Log to Cloud Logging with sanitized data
+        logger.info(f"PHI Access: action={action}, resource_type={resource_type}, success={success}", extra={
             'labels': {
                 'type': 'phi_access',
-                'user_id': user_id,
+                'user_hash': user_hash,
                 'resource_type': resource_type
             }
         })
-        
-        # Also write to BigQuery for long-term audit retention
+
+        # Write full audit entry (including real IDs) to BigQuery for HIPAA compliance
+        # BigQuery has proper access controls and encryption
         table_id = f"{PROJECT_ID}.ihep_audit.phi_access_log"
         errors = bq_client.insert_rows_json(table_id, [audit_entry])
-        
+
         if errors:
-            logger.error(f"Error writing audit log to BigQuery: {errors}")
-            
+            logger.error(f"Error writing audit log to BigQuery: audit write failed")
+
     except Exception as e:
-        logger.error(f"Failed to write audit log: {str(e)}")
+        logger.error(f"Failed to write audit log: exception occurred")
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -175,7 +182,10 @@ def get_patient(patient_id):
     """
     # Verify user is accessing their own data
     if request.user_id != patient_id:
-        logger.warning(f"User {request.user_id} attempted to access patient {patient_id}")
+        # Hash IDs for logging
+        user_hash = hashlib.sha256(str(request.user_id).encode()).hexdigest()[:8]
+        patient_hash = hashlib.sha256(str(patient_id).encode()).hexdigest()[:8]
+        logger.warning(f"User hash {user_hash} attempted to access patient hash {patient_hash}")
         audit_phi_access(request.user_id, 'Patient', patient_id, 'read', success=False)
         return jsonify({'error': 'Unauthorized access'}), 403
     
@@ -198,10 +208,11 @@ def get_patient(patient_id):
         return jsonify(patient_data), 200
         
     except exceptions.NotFound:
-        logger.info(f"Patient {patient_id} not found")
+        patient_hash = hashlib.sha256(str(patient_id).encode()).hexdigest()[:8]
+        logger.info(f"Patient hash {patient_hash} not found")
         return jsonify({'error': 'Patient not found'}), 404
     except exceptions.GoogleAPIError as e:
-        logger.error(f"Error retrieving patient: {str(e)}")
+        logger.error(f"Error retrieving patient: API error occurred")
         return jsonify({'error': 'Failed to retrieve patient data'}), 500
 
 @app.route('/patient/<patient_id>/observations', methods=['GET'])
@@ -273,7 +284,7 @@ def get_observations(patient_id):
         }), 200
         
     except exceptions.GoogleAPIError as e:
-        logger.error(f"Error retrieving observations: {str(e)}")
+        logger.error(f"Error retrieving observations: API error occurred")
         return jsonify({'error': 'Failed to retrieve observations'}), 500
 
 @app.route('/patient', methods=['POST'])
@@ -361,16 +372,17 @@ def create_patient():
         
         # Audit record creation
         audit_phi_access(request.user_id, 'Patient', request.user_id, 'create', success=True)
-        
-        logger.info(f"Created patient record for user {request.user_id}")
-        
+
+        user_hash = hashlib.sha256(str(request.user_id).encode()).hexdigest()[:8]
+        logger.info(f"Created patient record for user hash {user_hash}")
+
         return jsonify({
             'message': 'Patient record created successfully',
             'patient_id': request.user_id
         }), 201
-        
+
     except exceptions.GoogleAPIError as e:
-        logger.error(f"Error creating patient: {str(e)}")
+        logger.error(f"Error creating patient: API error occurred")
         return jsonify({'error': 'Failed to create patient record'}), 500
 
 @app.route('/patient/<patient_id>/deidentify', methods=['POST'])
@@ -473,16 +485,17 @@ def deidentify_patient_data(patient_id):
             success=True
         )
         
-        logger.info(f"De-identified data for patient {patient_id}")
-        
+        patient_hash = hashlib.sha256(str(patient_id).encode()).hexdigest()[:8]
+        logger.info(f"De-identified data for patient hash {patient_hash}")
+
         return jsonify({
             'message': 'De-identification completed',
             'destination': destination_dataset,
             'operation_id': operation.operation.name
         }), 200
-        
+
     except exceptions.GoogleAPIError as e:
-        logger.error(f"Error de-identifying data: {str(e)}")
+        logger.error(f"Error de-identifying data: API error occurred")
         return jsonify({'error': 'Failed to de-identify data'}), 500
 
 @app.route('/patient/<patient_id>/digital-twin-data', methods=['GET'])
@@ -635,7 +648,7 @@ def get_digital_twin_data(patient_id):
         }), 200
         
     except Exception as e:
-        logger.error(f"Error calculating digital twin data: {str(e)}")
+        logger.error(f"Error calculating digital twin data: exception occurred")
         return jsonify({'error': 'Failed to retrieve digital twin data'}), 500
 
 if __name__ == '__main__':
