@@ -335,7 +335,8 @@ def create_patient():
         return jsonify(result), 201
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Unexpected error in create_patient endpoint")
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 @app.route('/api/v1/patients/<patient_id>', methods=['GET'])
@@ -351,7 +352,8 @@ def get_patient(patient_id: str):
         return jsonify(result), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Unexpected error in get_patient endpoint")
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 @app.route('/api/v1/research/datasets', methods=['POST'])
@@ -371,7 +373,8 @@ def create_research_dataset():
         return jsonify(result), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("Unexpected error in create_research_dataset endpoint")
+        return jsonify({'error': 'An internal error has occurred.'}), 500
 
 
 if __name__ == '__main__':
