@@ -1,43 +1,45 @@
-# Multi-stage build for Health Insight Ventures
-FROM node:20-alpine AS builder
-
-# Set working directory
+# Multi-stage build for IHEP Next.js Application
+FROM node:20-alpine AS deps
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install dependencies based on the preferred package manager
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Install dependencies
-RUN npm ci && npm cache clean --force
-
-# Copy source code
+# Rebuild the source code only when needed
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the application
+# Next.js collects completely anonymous telemetry data about general usage.
+# Learn more here: https://nextjs.org/telemetry
+# Uncomment the following line in case you want to disable telemetry during the build.
+ENV NEXT_TELEMETRY_DISABLED 1
+
 RUN npm run build
 
-# Production stage
-FROM node:20-alpine AS production
-
-# Set working directory
+# Production image, copy all the files and run next
+FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Copy built application from builder stage
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# Set environment variables
-ENV NODE_ENV=production
-ENV PORT=5000
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
-# Expose port
+# Copy necessary files from builder
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+USER nextjs
+
+# Cloud Run will set PORT environment variable, default to 5000
 EXPOSE 5000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:5000/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+ENV PORT 5000
+ENV HOSTNAME "0.0.0.0"
 
 # Start the application
-CMD ["npm", "start"]
-
+CMD ["node", "server.js"]
