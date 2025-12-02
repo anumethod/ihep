@@ -28,6 +28,7 @@ from enum import Enum
 import json
 from collections import deque
 import hashlib
+import secrets
 import logging
 import os
 
@@ -46,6 +47,12 @@ def hash_patient_id(patient_id: str) -> str:
     if PATIENT_HASH_SALT:
         value = f"{PATIENT_HASH_SALT}:{value}"
     return hashlib.sha256(value.encode()).hexdigest()[:8]
+
+
+def hash_request_id(request_id: Optional[str]) -> str:
+    """Hash request identifiers so logs never reveal raw IDs"""
+    value = request_id if request_id is not None else ""
+    return hash_patient_id(f"request:{value}")
 
 
 class DataSourceType(Enum):
@@ -851,8 +858,8 @@ class DigitalTwinSynthesisService:
         self.usd_generation_interval = timedelta(minutes=5)  # Regenerate USD every 5 min
         
         logger.info(
-            f"Digital Twin Synthesis Service initialized with "
-            f"{update_interval}s update interval"
+            "Digital Twin Synthesis Service initialized with %ss update interval",
+            update_interval_seconds,
         )
     
     async def start(self):
@@ -950,7 +957,14 @@ class DigitalTwinSynthesisService:
             request: Update request to process
         """
         start_time = datetime.now()
-        logger.info(f"Processing update request {request.request_id}")
+        request_hash = hash_request_id(request.request_id)
+        patient_hash_list = sorted(hash_patient_id(pid) for pid in request.patient_updates)
+        hashes_display = ", ".join(patient_hash_list) if patient_hash_list else "none"
+        logger.info(
+            "Processing update request hash %s for patient hashes [%s]",
+            request_hash,
+            hashes_display,
+        )
         
         # Step 1: Collect health states for all patients in this batch
         health_states = {}
@@ -976,7 +990,7 @@ class DigitalTwinSynthesisService:
                 logger.error(f"Failed to collect data for patient hash {patient_hash}: exception occurred")
         
         if not health_states:
-            logger.warning(f"No valid health states in batch {request.request_id}")
+            logger.warning("No valid health states in batch hash %s", request_hash)
             return
         
         # Step 2: Update manifold projections incrementally
@@ -1010,8 +1024,10 @@ class DigitalTwinSynthesisService:
         self.morpho_metrics['total_updates'] += len(health_states)
         
         logger.info(
-            f"Completed update batch {request.request_id}: "
-            f"{len(health_states)} patients in {processing_time:.2f}s"
+            "Completed update batch hash %s: %d patients in %.2fs",
+            request_hash,
+            len(health_states),
+            processing_time,
         )
     
     def _validate_update(self,
@@ -1239,8 +1255,8 @@ async def demo_synthesis_service():
     for patient_id in patient_ids:
         await service.request_patient_update(patient_id, priority=1)
         # Log only a hashed version of patient_id for privacy
-        hashed_pid = hashlib.sha256(patient_id.encode()).hexdigest()[:8]
-        print(f"✓ Requested update for patient id [hash: {hashed_pid}]")
+        hashed_pid = hash_patient_id(patient_id)
+        print(f"✓ Requested update for patient hash {hashed_pid}")
     
     # Let service process updates
     print("\n[Processing] Allowing service to process updates...")

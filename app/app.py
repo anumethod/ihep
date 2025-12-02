@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from google.cloud import healthcare_v1
 from google.cloud import kms_v1
+from google.api_core.exceptions import NotFound
 from google.auth import default
 import hashlib
 import uuid
@@ -27,6 +28,7 @@ HEALTHCARE_DATASET = os.getenv('HEALTHCARE_DATASET')
 FHIR_STORE = os.getenv('FHIR_STORE')
 KMS_KEY_RING = os.getenv('KMS_KEY_RING')
 KMS_CRYPTO_KEY = os.getenv('KMS_CRYPTO_KEY')
+IDENTIFIER_HASH_SALT = os.getenv('IDENTIFIER_HASH_SALT', '')
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -40,6 +42,29 @@ kms_client = kms_v1.KeyManagementServiceClient()
 # Initialize utilities
 envelope_crypto = EnvelopeEncryption(kms_client, GCP_PROJECT, GCP_LOCATION, KMS_KEY_RING, KMS_CRYPTO_KEY)
 audit_logger = AuditLogger()
+
+
+def hash_identifier(value: Optional[str]) -> str:
+    """Return a short salted hash for identifiers used in logs."""
+    normalized = value or ''
+    if IDENTIFIER_HASH_SALT:
+        normalized = f"{IDENTIFIER_HASH_SALT}:{normalized}"
+    return hashlib.sha256(normalized.encode()).hexdigest()[:12]
+
+
+def generate_error_reference() -> str:
+    """Create a stable error reference token for client-facing errors."""
+    return uuid.uuid4().hex[:12]
+
+
+class HealthcareServiceError(Exception):
+    """Custom exception carrying sanitized error metadata for API responses."""
+
+    def __init__(self, public_message: str, reference: str, status_code: int = 500):
+        super().__init__(public_message)
+        self.public_message = public_message
+        self.reference = reference
+        self.status_code = status_code
 
 
 class HealthcareAPIService:
@@ -57,6 +82,51 @@ class HealthcareAPIService:
             f"projects/{GCP_PROJECT}/locations/{GCP_LOCATION}/"
             f"datasets/{HEALTHCARE_DATASET}/fhirStores/{FHIR_STORE}"
         )
+
+    def _raise_service_error(
+        self,
+        *,
+        action: str,
+        exc: Exception,
+        user_id: Optional[str],
+        public_message: str,
+        status_code: int,
+        patient_id: Optional[str] = None,
+        patient_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Log a sanitized error, emit audit trail, and raise service exception."""
+        error_reference = generate_error_reference()
+        user_hash = hash_identifier(user_id)
+
+        if patient_ids:
+            patient_scope = ",".join(sorted(hash_identifier(pid) for pid in patient_ids))
+            audit_resource = 'PatientCollection'
+        else:
+            patient_scope = hash_identifier(patient_id)
+            audit_resource = f'Patient/{patient_id}' if patient_id else 'Patient'
+
+        logger.error(
+            "%s failed ref=%s user_hash=%s patient_scope=%s error_type=%s",
+            action,
+            error_reference,
+            user_hash,
+            patient_scope or 'none',
+            exc.__class__.__name__,
+        )
+
+        audit_logger.log(
+            user_id=user_id,
+            action=action,
+            resource=audit_resource,
+            outcome='FAILURE',
+            details={
+                'error_reference': error_reference,
+                'error_type': exc.__class__.__name__,
+                'patient_scope': patient_scope or 'none',
+            }
+        )
+
+        raise HealthcareServiceError(public_message, error_reference, status_code) from None
     
     def create_patient(self, patient_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         """
@@ -72,6 +142,7 @@ class HealthcareAPIService:
         Returns:
             Patient resource with FHIR ID
         """
+                patient_id: Optional[str] = None
         try:
             # Validate FHIR resource
             if not validate_fhir_resource(patient_data, 'Patient'):
@@ -129,16 +200,24 @@ class HealthcareAPIService:
                 }
             }
             
-        except Exception as e:
-            logger.error(f"Error creating patient: {str(e)}")
-            audit_logger.log(
-                user_id=user_id,
+        except ValueError as exc:
+            self._raise_service_error(
                 action='CREATE_PATIENT',
-                resource='Patient',
-                outcome='FAILURE',
-                details={'error': str(e)}
+                exc=exc,
+                user_id=user_id,
+                public_message='Invalid patient payload',
+                status_code=400,
+                patient_id=patient_id,
             )
-            raise
+        except Exception as exc:
+            self._raise_service_error(
+                action='CREATE_PATIENT',
+                exc=exc,
+                user_id=user_id,
+                public_message='Unable to create patient record',
+                status_code=500,
+                patient_id=patient_id,
+            )
     
     def get_patient(self, patient_id: str, user_id: str) -> Dict[str, Any]:
         """
@@ -186,21 +265,39 @@ class HealthcareAPIService:
                 'data': decrypted_data
             }
             
-        except Exception as e:
-            logger.error(f"Error retrieving patient: {str(e)}")
-            audit_logger.log(
-                user_id=user_id,
+        except NotFound as exc:
+            self._raise_service_error(
                 action='VIEW_PHI',
-                resource=f'Patient/{patient_id}',
-                outcome='FAILURE',
-                details={'error': str(e)}
+                exc=exc,
+                user_id=user_id,
+                public_message='Patient not found',
+                status_code=404,
+                patient_id=patient_id,
             )
-            raise
+        except ValueError as exc:
+            self._raise_service_error(
+                action='VIEW_PHI',
+                exc=exc,
+                user_id=user_id,
+                public_message='Unable to retrieve patient record',
+                status_code=500,
+                patient_id=patient_id,
+            )
+        except Exception as exc:
+            self._raise_service_error(
+                action='VIEW_PHI',
+                exc=exc,
+                user_id=user_id,
+                public_message='Unable to retrieve patient record',
+                status_code=500,
+                patient_id=patient_id,
+            )
     
     def de_identify_for_research(
         self, 
         patient_ids: List[str], 
-        k: int = 5
+        k: int = 5,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         De-identify patient data for research with k-anonymity guarantee
@@ -245,9 +342,24 @@ class HealthcareAPIService:
                 }
             }
             
-        except Exception as e:
-            logger.error(f"De-identification error: {str(e)}")
-            raise
+        except ValueError as exc:
+            self._raise_service_error(
+                action='DEIDENTIFY_PATIENT_DATA',
+                exc=exc,
+                user_id=user_id,
+                public_message='Unable to generate research dataset with requested parameters',
+                status_code=400,
+                patient_ids=patient_ids,
+            )
+        except Exception as exc:
+            self._raise_service_error(
+                action='DEIDENTIFY_PATIENT_DATA',
+                exc=exc,
+                user_id=user_id,
+                public_message='Unable to generate research dataset',
+                status_code=500,
+                patient_ids=patient_ids,
+            )
     
     def _apply_k_anonymity(self, records: List[Dict], k: int) -> List[Dict]:
         """
@@ -325,8 +437,8 @@ def health_check():
 @rate_limit(limit=100, per=60)  # 100 requests per minute
 def create_patient():
     """Create patient record"""
+    user_id = request.headers.get('X-User-ID')
     try:
-        user_id = request.headers.get('X-User-ID')
         if not user_id:
             return jsonify({'error': 'Missing user ID'}), 401
         
@@ -334,32 +446,53 @@ def create_patient():
         result = healthcare_service.create_patient(patient_data, user_id)
         return jsonify(result), 201
         
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except HealthcareServiceError as exc:
+        return jsonify({'error': exc.public_message, 'reference': exc.reference}), exc.status_code
+    except Exception as exc:
+        error_reference = generate_error_reference()
+        logger.error(
+            "Unhandled create_patient error ref=%s user_hash=%s error_type=%s",
+            error_reference,
+            hash_identifier(user_id),
+            exc.__class__.__name__,
+            exc_info=True,
+        )
+        return jsonify({'error': 'Internal server error', 'reference': error_reference}), 500
 
 
 @app.route('/api/v1/patients/<patient_id>', methods=['GET'])
 @rate_limit(limit=200, per=60)  # 200 requests per minute
 def get_patient(patient_id: str):
     """Retrieve patient record"""
+    user_id = request.headers.get('X-User-ID')
     try:
-        user_id = request.headers.get('X-User-ID')
         if not user_id:
             return jsonify({'error': 'Missing user ID'}), 401
         
         result = healthcare_service.get_patient(patient_id, user_id)
         return jsonify(result), 200
         
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except HealthcareServiceError as exc:
+        return jsonify({'error': exc.public_message, 'reference': exc.reference}), exc.status_code
+    except Exception as exc:
+        error_reference = generate_error_reference()
+        logger.error(
+            "Unhandled get_patient error ref=%s user_hash=%s patient_hash=%s error_type=%s",
+            error_reference,
+            hash_identifier(user_id),
+            hash_identifier(patient_id),
+            exc.__class__.__name__,
+            exc_info=True,
+        )
+        return jsonify({'error': 'Internal server error', 'reference': error_reference}), 500
 
 
 @app.route('/api/v1/research/datasets', methods=['POST'])
 @rate_limit(limit=10, per=60)  # 10 requests per minute (expensive operation)
 def create_research_dataset():
     """Create de-identified research dataset"""
+    user_id = request.headers.get('X-User-ID')
     try:
-        user_id = request.headers.get('X-User-ID')
         if not user_id:
             return jsonify({'error': 'Missing user ID'}), 401
         
@@ -367,11 +500,21 @@ def create_research_dataset():
         patient_ids = data.get('patient_ids', [])
         k = data.get('k', 5)
         
-        result = healthcare_service.de_identify_for_research(patient_ids, k)
+        result = healthcare_service.de_identify_for_research(patient_ids, k, user_id)
         return jsonify(result), 200
         
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except HealthcareServiceError as exc:
+        return jsonify({'error': exc.public_message, 'reference': exc.reference}), exc.status_code
+    except Exception as exc:
+        error_reference = generate_error_reference()
+        logger.error(
+            "Unhandled create_research_dataset error ref=%s user_hash=%s error_type=%s",
+            error_reference,
+            hash_identifier(user_id),
+            exc.__class__.__name__,
+            exc_info=True,
+        )
+        return jsonify({'error': 'Internal server error', 'reference': error_reference}), 500
 
 
 if __name__ == '__main__':

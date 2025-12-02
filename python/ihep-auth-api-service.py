@@ -30,6 +30,7 @@ from argon2.exceptions import VerifyMismatchError
 import logging
 from google.cloud import secretmanager
 from google.cloud import logging as cloud_logging
+from typing import Any
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -73,6 +74,28 @@ def _masked_identifier(identifier: str) -> str:
         return 'user-context'
     normalized = identifier.split(',')[0].strip()
     return _anonymize_ip(normalized)
+
+
+def _generate_error_reference() -> str:
+    """Create opaque reference tokens for correlating client error reports."""
+    return secrets.token_urlsafe(8)
+
+
+def _log_internal_error(action: str, exc: Exception, **context: Any) -> str:
+    """Log sanitized error details and return a reference for the caller."""
+    reference = _generate_error_reference()
+    hashed_context = {
+        key: _hash_identifier(value)
+        for key, value in context.items()
+    }
+    logger.error(
+        "%s failed: ref=%s error_type=%s context=%s",
+        action,
+        reference,
+        exc.__class__.__name__,
+        hashed_context,
+    )
+    return reference
 
 # Initialize password hasher with OWASP recommended parameters
 ph = PasswordHasher(
@@ -230,11 +253,12 @@ def health_check():
             'timestamp': datetime.datetime.utcnow().isoformat(),
             'service': 'auth-api'
         }), 200
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+    except Exception as exc:
+        reference = _log_internal_error('health_check', exc)
         return jsonify({
             'status': 'unhealthy',
-            'error': str(e)
+            'error': 'Service unavailable',
+            'reference': reference,
         }), 503
 
 @app.route('/signup', methods=['POST'])
@@ -330,9 +354,9 @@ def signup():
             }
         }), 201
         
-    except Exception as e:
-        logger.error(f"Signup error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as exc:
+        reference = _log_internal_error('signup', exc, email=email)
+        return jsonify({'error': 'Internal server error', 'reference': reference}), 500
 
 @app.route('/login', methods=['POST'])
 @rate_limit(max_requests=5, window_seconds=900)  # 5 attempts per 15 minutes
@@ -420,9 +444,9 @@ def login():
             }
         }), 200
         
-    except Exception as e:
-        logger.error(f"Login error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as exc:
+        reference = _log_internal_error('login', exc, email=email)
+        return jsonify({'error': 'Internal server error', 'reference': reference}), 500
 
 @app.route('/refresh', methods=['POST'])
 @rate_limit(max_requests=10, window_seconds=3600)
@@ -486,9 +510,13 @@ def refresh_token():
             'refreshToken': new_refresh_token
         }), 200
         
-    except Exception as e:
-        logger.error(f"Token refresh error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as exc:
+        reference = _log_internal_error(
+            'refresh_token',
+            exc,
+            refresh_token=refresh_token_value,
+        )
+        return jsonify({'error': 'Internal server error', 'reference': reference}), 500
 
 @app.route('/logout', methods=['POST'])
 @require_auth
@@ -522,9 +550,13 @@ def logout():
 
         return jsonify({'message': 'Logged out successfully'}), 200
         
-    except Exception as e:
-        logger.error(f"Logout error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as exc:
+        reference = _log_internal_error(
+            'logout',
+            exc,
+            user_email=getattr(request, 'user_email', None),
+        )
+        return jsonify({'error': 'Internal server error', 'reference': reference}), 500
 
 @app.route('/validate', methods=['GET'])
 @require_auth
@@ -555,9 +587,13 @@ def validate_token():
             }
         }), 200
         
-    except Exception as e:
-        logger.error(f"Token validation error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+    except Exception as exc:
+        reference = _log_internal_error(
+            'validate_token',
+            exc,
+            user_id=getattr(request, 'user_id', None),
+        )
+        return jsonify({'error': 'Internal server error', 'reference': reference}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
