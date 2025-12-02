@@ -473,7 +473,7 @@ def deidentify_patient_data(patient_id):
             success=True
         )
         
-        logger.info(f"De-identified data for patient {patient_id}")
+        logger.info(f"De-identified data for patient [REDACTED]")
         
         return jsonify({
             'message': 'De-identification completed',
