@@ -40,6 +40,40 @@ logging_client = cloud_logging.Client()
 logging_client.setup_logging()
 logger = logging.getLogger(__name__)
 
+AUTH_LOG_REDACTION_SALT = os.getenv('AUTH_LOG_REDACTION_SALT', os.getenv('AUDIT_LOG_REDACTION_SALT', ''))
+
+
+def _hash_identifier(value: str) -> str:
+    """Generate a deterministic salted hash suitable for log correlation."""
+    if value is None:
+        return 'unknown'
+    stringified = str(value)
+    if AUTH_LOG_REDACTION_SALT:
+        stringified = f"{AUTH_LOG_REDACTION_SALT}:{stringified}"
+    return hashlib.sha256(stringified.encode()).hexdigest()[:12]
+
+
+def _anonymize_ip(ip_address: str) -> str:
+    """Mask IP addresses to avoid storing precise network identifiers."""
+    if not ip_address:
+        return 'unknown'
+    if ':' in ip_address:
+        return 'anonymized-ipv6'
+    octets = ip_address.split('.')
+    if len(octets) == 4:
+        return '.'.join(octets[:2] + ['x', 'x'])
+    return 'anonymized'
+
+
+def _masked_identifier(identifier: str) -> str:
+    """Return a contextual label for log statements without leaking raw data."""
+    if not identifier:
+        return 'unknown'
+    if identifier.startswith('user:'):
+        return 'user-context'
+    normalized = identifier.split(',')[0].strip()
+    return _anonymize_ip(normalized)
+
 # Initialize password hasher with OWASP recommended parameters
 ph = PasswordHasher(
     time_cost=2,      # Number of iterations
@@ -100,6 +134,8 @@ def rate_limit(max_requests=5, window_seconds=3600):
         def wrapped(*args, **kwargs):
             # Get identifier (IP address or user ID if authenticated)
             identifier = request.headers.get('X-Forwarded-For', request.remote_addr)
+            if identifier:
+                identifier = identifier.split(',')[0].strip()
             
             # Check if Authorization header exists for user-based limiting
             auth_header = request.headers.get('Authorization')
@@ -129,8 +165,14 @@ def rate_limit(max_requests=5, window_seconds=3600):
                 redis_client.decr(key)
                 return f(*args, **kwargs)
             else:
-                # Rate limit exceeded
-                logger.warning(f"Rate limit exceeded for {identifier} on {f.__name__}")
+                # Rate limit exceeded with redacted logging context
+                identifier_hash = _hash_identifier(identifier)
+                logger.warning(
+                    "Rate limit exceeded: identifier_hash=%s masked_origin=%s endpoint=%s",
+                    identifier_hash,
+                    _masked_identifier(identifier),
+                    f.__name__,
+                )
                 return jsonify({
                     'error': 'Rate limit exceeded',
                     'retry_after': redis_client.ttl(key)
@@ -271,9 +313,9 @@ def signup():
             str(user['id'])
         )
         
-        # Log successful signup
-        logger.info(f"User signed up: {email}")
-        
+        # Log successful signup with salted hash for correlation only
+        logger.info("User signed up: email_hash=%s", _hash_identifier(email))
+
         cur.close()
         conn.close()
         
@@ -343,7 +385,7 @@ def login():
                 )
                 conn.commit()
         except VerifyMismatchError:
-            logger.warning(f"Failed login attempt for {email}")
+            logger.warning("Failed login attempt: email_hash=%s", _hash_identifier(email))
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Generate JWT token
@@ -361,9 +403,9 @@ def login():
             str(user['id'])
         )
         
-        # Log successful login
-        logger.info(f"User logged in: {email}")
-        
+        # Log successful login without exposing raw email
+        logger.info("User logged in: email_hash=%s", _hash_identifier(email))
+
         cur.close()
         conn.close()
         
@@ -475,9 +517,9 @@ def logout():
         data = request.get_json() or {}
         if 'refreshToken' in data:
             redis_client.delete(f"refresh:{data['refreshToken']}")
-        
-        logger.info(f"User logged out: {request.user_email}")
-        
+
+        logger.info("User logged out: email_hash=%s", _hash_identifier(request.user_email))
+
         return jsonify({'message': 'Logged out successfully'}), 200
         
     except Exception as e:

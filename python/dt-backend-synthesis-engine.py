@@ -29,6 +29,7 @@ import json
 from collections import deque
 import hashlib
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +37,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('IHEP.DigitalTwinSynthesis')
+PATIENT_HASH_SALT = os.getenv('PATIENT_HASH_SALT', '')
+
+
+def hash_patient_id(patient_id: str) -> str:
+    """Hash patient ID for secure logging"""
+    value = str(patient_id)
+    if PATIENT_HASH_SALT:
+        value = f"{PATIENT_HASH_SALT}:{value}"
+    return hashlib.sha256(value.encode()).hexdigest()[:8]
 
 
 class DataSourceType(Enum):
@@ -234,8 +244,9 @@ class IncrementalManifoldProjector:
             [initial_position.copy() for _ in range(self.history_length)],
             maxlen=self.history_length
         )
-        
-        logger.info(f"Initialized patient {patient_id} at position {initial_position}")
+
+        patient_hash = hash_patient_id(patient_id)
+        logger.info(f"Initialized patient hash {patient_hash} at position {initial_position}")
     
     def update_patient(self, patient_id: str, new_health_state: PatientHealthState) -> np.ndarray:
         """
@@ -277,7 +288,8 @@ class IncrementalManifoldProjector:
         
         # If health state hasn't changed much, skip update to save computation
         if feature_distance < 0.01:
-            logger.debug(f"Patient {patient_id} health state unchanged, skipping update")
+            patient_hash = hash_patient_id(patient_id)
+            logger.debug(f"Patient hash {patient_hash} health state unchanged, skipping update")
             return current_position
         
         # Find k nearest neighbors in current projection space
@@ -323,8 +335,9 @@ class IncrementalManifoldProjector:
         # Log significant movements
         displacement = np.linalg.norm(validated_position - current_position)
         if displacement > 0.1:
+            patient_hash = hash_patient_id(patient_id)
             logger.info(
-                f"Patient {patient_id} moved {displacement:.3f} units in health space"
+                f"Patient hash {patient_hash} moved {displacement:.3f} units in health space"
             )
         
         return validated_position
@@ -491,8 +504,9 @@ class IncrementalManifoldProjector:
         max_displacement_per_day = 0.5
         
         if displacement > max_displacement_per_day:
+            patient_hash = hash_patient_id(patient_id)
             logger.warning(
-                f"Patient {patient_id} displacement {displacement:.3f} "
+                f"Patient hash {patient_hash} displacement {displacement:.3f} "
                 f"exceeds maximum {max_displacement_per_day}, clamping"
             )
             
@@ -504,8 +518,9 @@ class IncrementalManifoldProjector:
         
         # Check for NaN or Inf
         if not np.all(np.isfinite(new_position)):
+            patient_hash = hash_patient_id(patient_id)
             logger.error(
-                f"Patient {patient_id} produced non-finite position, "
+                f"Patient hash {patient_hash} produced non-finite position, "
                 f"reverting to previous position"
             )
             return old_position
@@ -523,8 +538,9 @@ class IncrementalManifoldProjector:
         max_cd4_delta = r_max * cd4_old * (1 - cd4_old / cd4_max)
         
         if cd4_delta > max_cd4_delta * 1.2:  # 20% tolerance
+            patient_hash = hash_patient_id(patient_id)
             logger.warning(
-                f"Patient {patient_id} CD4 increase {cd4_delta:.1f} "
+                f"Patient hash {patient_hash} CD4 increase {cd4_delta:.1f} "
                 f"exceeds physiological maximum {max_cd4_delta:.1f}"
             )
             # Could clamp position further here if needed
@@ -577,20 +593,21 @@ class DataIngestionCoordinator:
     async def ingest_from_postgresql(self, patient_id: str) -> Optional[PatientHealthState]:
         """
         Ingest data from PostgreSQL database.
-        
+
         This retrieves user-entered data like medication adherence logs,
         appointment history, and self-reported outcomes.
-        
+
         Args:
             patient_id: Patient to fetch data for
-            
+
         Returns:
             Partial health state with PostgreSQL data populated
         """
         # In production, this would query your actual PostgreSQL database
         # For demonstration, we simulate the database call
-        
-        logger.debug(f"Fetching PostgreSQL data for patient {patient_id}")
+
+        patient_hash = hash_patient_id(patient_id)
+        logger.debug(f"Fetching PostgreSQL data for patient hash {patient_hash}")
         
         # Simulate database query with asyncio
         await asyncio.sleep(0.1)  # Simulate network latency
@@ -615,17 +632,18 @@ class DataIngestionCoordinator:
     async def ingest_from_healthcare_api(self, patient_id: str) -> Optional[PatientHealthState]:
         """
         Ingest data from Google Cloud Healthcare API.
-        
+
         This retrieves clinical lab results and other PHI that must be
         stored in HIPAA-compliant infrastructure.
-        
+
         Args:
             patient_id: Patient to fetch data for
-            
+
         Returns:
             Partial health state with clinical data populated
         """
-        logger.debug(f"Fetching Healthcare API data for patient {patient_id}")
+        patient_hash = hash_patient_id(patient_id)
+        logger.debug(f"Fetching Healthcare API data for patient hash {patient_hash}")
         
         await asyncio.sleep(0.2)  # Simulate API latency
         
@@ -646,17 +664,18 @@ class DataIngestionCoordinator:
     async def ingest_from_wearable(self, patient_id: str) -> Optional[PatientHealthState]:
         """
         Ingest data from wearable devices.
-        
+
         This processes continuous biometric streams from devices like
         smartwatches that track heart rate, sleep, and activity.
-        
+
         Args:
             patient_id: Patient to fetch data for
-            
+
         Returns:
             Partial health state with wearable data populated
         """
-        logger.debug(f"Fetching wearable data for patient {patient_id}")
+        patient_hash = hash_patient_id(patient_id)
+        logger.debug(f"Fetching wearable data for patient hash {patient_hash}")
         
         await asyncio.sleep(0.05)  # Wearables are usually fastest
         
@@ -677,17 +696,18 @@ class DataIngestionCoordinator:
     async def collect_complete_health_state(self, patient_id: str) -> Optional[PatientHealthState]:
         """
         Collect data from all sources and merge into complete health state.
-        
+
         This orchestrates parallel data fetching from multiple sources and
         intelligently merges the results, handling missing data and conflicts.
-        
+
         Args:
             patient_id: Patient to collect data for
-            
+
         Returns:
             Complete (or as complete as possible) health state
         """
-        logger.info(f"Collecting complete health state for patient {patient_id}")
+        patient_hash = hash_patient_id(patient_id)
+        logger.info(f"Collecting complete health state for patient hash {patient_hash}")
         
         # Fetch from all sources in parallel
         results = await asyncio.gather(
@@ -705,7 +725,8 @@ class DataIngestionCoordinator:
         
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"Data ingestion error for {patient_id}: {result}")
+                patient_hash = hash_patient_id(patient_id)
+                logger.error(f"Data ingestion error for patient hash {patient_hash}: error occurred")
                 continue
             
             if result is None:
@@ -729,9 +750,10 @@ class DataIngestionCoordinator:
         # Compute completeness and quality scores
         merged.completeness_score = merged.compute_completeness()
         merged.data_quality_score = self._assess_data_quality(merged)
-        
+
+        patient_hash = hash_patient_id(patient_id)
         logger.info(
-            f"Collected data for {patient_id}: "
+            f"Collected data for patient hash {patient_hash}: "
             f"completeness={merged.completeness_score:.2f}, "
             f"quality={merged.data_quality_score:.2f}"
         )
@@ -937,16 +959,18 @@ class DigitalTwinSynthesisService:
                 
                 # Check if data quality sufficient for update
                 if health_state.completeness_score < self.data_coordinator.completeness_threshold:
+                    patient_hash = hash_patient_id(patient_id)
                     logger.warning(
-                        f"Patient {patient_id} data incomplete "
+                        f"Patient hash {patient_hash} data incomplete "
                         f"({health_state.completeness_score:.2f}), skipping update"
                     )
                     continue
                 
                 health_states[patient_id] = health_state
-                
+
             except Exception as e:
-                logger.error(f"Failed to collect data for patient {patient_id}: {e}")
+                patient_hash = hash_patient_id(patient_id)
+                logger.error(f"Failed to collect data for patient hash {patient_hash}: exception occurred")
         
         if not health_states:
             logger.warning(f"No valid health states in batch {request.request_id}")
@@ -964,7 +988,8 @@ class DigitalTwinSynthesisService:
         validation_passed = True
         for patient_id, position in new_positions.items():
             if not self._validate_update(patient_id, position, health_states[patient_id]):
-                logger.error(f"Validation failed for patient {patient_id}")
+                patient_hash = hash_patient_id(patient_id)
+                logger.error(f"Validation failed for patient hash {patient_hash}")
                 validation_passed = False
                 self.morpho_metrics['validation_failures'] += 1
         
@@ -1007,18 +1032,21 @@ class DigitalTwinSynthesisService:
         """
         # Check for non-finite values
         if not np.all(np.isfinite(position)):
-            logger.error(f"Non-finite position for patient {patient_id}")
+            patient_hash = hash_patient_id(patient_id)
+            logger.error(f"Non-finite position for patient hash {patient_hash}")
             return False
         
         # Check that position is within reasonable bounds
         # (Health space should be roughly centered at origin with extent ~10 units)
         if np.linalg.norm(position) > 20:
-            logger.error(f"Position far from origin for patient {patient_id}: {position}")
+            patient_hash = hash_patient_id(patient_id)
+            logger.error(f"Position far from origin for patient hash {patient_hash}")
             return False
         
         # Check data quality score
         if health_state.data_quality_score < 0.5:
-            logger.warning(f"Low data quality for patient {patient_id}")
+            patient_hash = hash_patient_id(patient_id)
+            logger.warning(f"Low data quality for patient hash {patient_hash}")
             return False
         
         return True

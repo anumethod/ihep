@@ -1,0 +1,10 @@
+flask==3.0.0
+gunicorn==21.2.0
+google-cloud-healthcare
+google-cloud-storage
+google-cloud-aiplatform
+usd-core # OpenUSD libraries
+numpy
+pandas
+scikit-learn # For "Recovery Capital" scoring
+stripe # For Fintech/Income distribution
