@@ -48,7 +48,9 @@ jobs:
   apply:
     needs: plan
     runs-on: [self-hosted]
-    environment: production
+    environment:
+      name: production
+      url: https://console.cloud.google.com/
     permissions:
       id-token: write
       contents: read
@@ -83,10 +85,33 @@ jobs:
         run: |
           terraform workspace select production || terraform workspace new production
 
-      - name: Terraform apply (production)
+      - name: Terraform plan for review
         working-directory: terraform
         run: |
-          terraform apply -auto-approve \
+          terraform plan -out=tfplan \
             -var enable_network=true \
             -var enable_service_account=true
+
+      - name: Terraform show plan
+        working-directory: terraform
+        run: terraform show -no-color tfplan > plan-output.txt
+
+      - name: Upload plan for review
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: terraform/plan-output.txt
+
+      - name: Wait for manual approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: ${{ secrets.TERRAFORM_APPROVERS }}
+          minimum-approvals: 2
+          issue-title: "Terraform Production Deployment Approval"
+          issue-body: "Please review the Terraform plan and approve if changes are acceptable."
+
+      - name: Terraform apply (manual approval required)
+        working-directory: terraform
+        run: terraform apply tfplan
 

@@ -41,10 +41,14 @@ jobs:
         run: |
           terraform workspace select staging || terraform workspace new staging
 
-      - name: Terraform apply (staging)
+      - name: Terraform plan (staging)
         working-directory: terraform
         run: |
-          terraform apply -auto-approve \
+          terraform plan -out=tfplan \
             -var enable_network=true \
             -var enable_service_account=true
+
+      - name: Terraform apply (staging)
+        working-directory: terraform
+        run: terraform apply tfplan
 

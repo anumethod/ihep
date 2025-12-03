@@ -52,7 +52,8 @@ jobs:
             --region "$REGION" \
             --image "$IMAGE" \
             --platform managed \
-            --allow-unauthenticated \
+            --no-allow-unauthenticated \
+            --ingress internal-and-cloud-load-balancing \
             --memory 512Mi \
             --cpu 1 \
             --max-instances 10 \
