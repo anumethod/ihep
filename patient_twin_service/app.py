@@ -202,30 +202,31 @@ async def update_twin(
         twin.last_sync = datetime.utcnow()
         db.commit()
         
-        # Publish update event for real-time processing
+        # Publish update event for real-time processing (hash patient_id for HIPAA compliance)
         publisher = pubsub_v1.PublisherClient()
         topic_path = publisher.topic_path('your-project-id', 'twin-updates')
-        
+
         message_data = json.dumps({
-            'patient_id': update_request.patient_id,
+            'patient_id': hash_patient_id(update_request.patient_id),
             'risk_score': twin_state.risk_score,
             'timestamp': datetime.utcnow().isoformat()
         }).encode('utf-8')
-        
+
         publisher.publish(topic_path, message_data)
         
         logger.info(f"Twin updated for patient {hash_patient_id(update_request.patient_id)}")
-        
+
         return {
             "status": "success",
-            "patient_id": update_request.patient_id,
+            "patient_id": hash_patient_id(update_request.patient_id),
             "risk_score": twin_state.risk_score,
             "morphogenetic_score": twin_state.morphogenetic_score
         }
         
     except Exception as e:
         db.rollback()
-        logger.error(f"Error updating twin: {str(e)}")
+        logger.error(f"Error updating twin: {type(e).__name__}")
+        logger.debug(f"Error details: {str(e)}")  # Detailed error only in debug mode
         raise HTTPException(status_code=500, detail="Failed to update twin")
 
 @app.get("/v1/twin/{patient_id}")
@@ -248,7 +249,7 @@ async def get_twin(patient_id: str, db = Depends(get_db)):
             state = json.loads(twin.twin_state) if twin.twin_state else {}
         
         return {
-            "patient_id": patient_id,
+            "patient_id": hash_patient_id(patient_id),
             "twin_state": state,
             "last_sync": twin.last_sync.isoformat() if twin.last_sync else None,
             "morphogenetic_score": twin.morphogenetic_score
@@ -257,7 +258,8 @@ async def get_twin(patient_id: str, db = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving twin: {str(e)}")
+        logger.error(f"Error retrieving twin: {type(e).__name__}")
+        logger.debug(f"Error details: {str(e)}")  # Detailed error only in debug mode
         raise HTTPException(status_code=500, detail="Failed to retrieve twin")
 
 @app.get("/health")

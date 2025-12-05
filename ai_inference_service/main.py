@@ -157,9 +157,9 @@ async def predict_risk(patient_data: PatientData):
         # Generate recommendations
         recommendations = ai_service.generate_recommendations(risk_score, patient_data)
         
-        # Create response
+        # Create response (hash patient_id for HIPAA compliance)
         prediction = RiskPrediction(
-            patient_id=patient_data.patient_id,
+            patient_id=hash_patient_id(patient_data.patient_id),
             risk_score=float(risk_score),
             confidence=float(confidence),
             explanation=explanation,
@@ -174,7 +174,8 @@ async def predict_risk(patient_data: PatientData):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in risk prediction: {str(e)}")
+        logger.error(f"Error in risk prediction: {type(e).__name__}")
+        logger.debug(f"Error details: {str(e)}")  # Detailed error only in debug mode
         raise HTTPException(status_code=500, detail="Failed to generate prediction")
 
 @app.get("/v1/model/status")
